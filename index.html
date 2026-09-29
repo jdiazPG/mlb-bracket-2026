@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2026 MLB Postseason Bracket Challenge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel standalone for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase CDN JS SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const HARDCODED_CONFIG = {
+      apiKey: "AIzaSyDm6c7L2PlzM3WJkfnDidnAHOLEh3BNxkc",
+      authDomain: "mlb-playoff-7136f.firebaseapp.com",
+      projectId: "mlb-playoff-7136f",
+      storageBucket: "mlb-playoff-7136f.firebasestorage.app",
+      messagingSenderId: "189528601083",
+      appId: "1:189528601083:web:0a660e688139c157639b5e"
+    };
+
+    const INITIAL_TEAMS = {
+      al: {
+        wc: [
+          { id: 'al_wc1', name: 'Astros', seed: 3, opponent: 'White Sox', oppSeed: 6 },
+          { id: 'al_wc2', name: 'Yankees', seed: 4, opponent: 'Red Sox', oppSeed: 5 }
+        ],
+        byes: [
+          { seed: 1, name: 'Rays' },
+          { seed: 2, name: 'Guardians' }
+        ]
+      },
+      nl: {
+        wc: [
+          { id: 'nl_wc1', name: 'Braves', seed: 3, opponent: 'Phillies', oppSeed: 6 },
+          { id: 'nl_wc2', name: 'Padres', seed: 4, opponent: 'Cubs', oppSeed: 5 }
+        ],
+        byes: [
+          { seed: 1, name: 'Brewers' },
+          { seed: 2, name: 'Dodgers' }
+        ]
+      }
+    };
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('bracket');
+      const [userName, setUserName] = useState('');
+      const [picks, setPicks] = useState({});
+      const [tbRuns, setTbRuns] = useState('');
+      const [brackets, setBrackets] = useState([]);
+      const [actualResults, setActualResults] = useState({});
+      const [cloudStatus, setCloudStatus] = useState('connecting');
+      const [dbRef, setDbRef] = useState(null);
+      const [adminPass, setAdminPass] = useState('');
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [viewingBracket, setViewingBracket] = useState(null);
+      const [ruleModalOpen, setRuleModalOpen] = useState(false);
+
+      useEffect(() => {
+        try {
+          if (!firebase.apps.length) {
+            firebase.initializeApp(HARDCODED_CONFIG);
+          }
+          const db = firebase.firestore();
+          setDbRef(db);
+
+          firebase.auth().signInAnonymously().catch(err => console.log('Auth note:', err));
+
+          const unsubscribeBrackets = db.collection('mlb_brackets_2026').onSnapshot(
+            snapshot => {
+              const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setBrackets(docs);
+              setCloudStatus('connected');
+            },
+            err => {
+              console.warn('Firestore Permission Issue:', err);
+              setCloudStatus('fallback');
+            }
+          );
+
+          const unsubscribeResults = db.collection('mlb_results_2026').doc('official').onSnapshot(
+            doc => {
+              if (doc.exists) setActualResults(doc.data() || {});
+            },
+            err => console.warn('Results sync note:', err)
+          );
+
+          return () => {
+            unsubscribeBrackets();
+            unsubscribeResults();
+          };
+        } catch (e) {
+          console.error('Firebase init error:', e);
+          setCloudStatus('fallback');
+        }
+      }, []);
+
+      useEffect(() => {
+        if (cloudStatus === 'fallback') {
+          const saved = localStorage.getItem('mlb_brackets_local_2026');
+          if (saved) {
+            try { setBrackets(JSON.parse(saved)); } catch(e){}
+          }
+          const savedRes = localStorage.getItem('mlb_results_local_2026');
+          if (savedRes) {
+            try { setActualResults(JSON.parse(savedRes)); } catch(e){}
+          }
+        }
+      }, [cloudStatus]);
+
+      const handlePick = (matchupId, teamName) => {
+        setPicks(prev => ({ ...prev, [matchupId]: teamName }));
+      };
+
+      const calculateScore = (bracketPicks) => {
+        let score = 0;
+        const weights = { wc: 10, ds: 20, lcs: 40, ws: 80 };
+        Object.keys(bracketPicks).forEach(key => {
+          if (actualResults[key] && actualResults[key] === bracketPicks[key]) {
+            if (key.includes('wc')) score += weights.wc;
+            else if (key.includes('ds')) score += weights.ds;
+            else if (key.includes('cs')) score += weights.lcs;
+            else if (key.includes('ws')) score += weights.ws;
+          }
+        });
+        return score;
+      };
+
+      const saveBracket = async () => {
+        if (!userName.trim()) {
+          alert('Please enter your name before submitting.');
+          return;
+        }
+
+        const newEntry = {
+          id: userName.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now(),
+          name: userName,
+          picks: picks,
+          tbRuns: tbRuns || '0',
+          createdAt: new Date().toISOString()
+        };
+
+        if (cloudStatus === 'connected' && dbRef) {
+          try {
+            await dbRef.collection('mlb_brackets_2026').doc(newEntry.id).set(newEntry);
+            alert('🎉 Bracket submitted live to the group cloud database!');
+          } catch (e) {
+            console.error('Cloud save failed:', e);
+            setRuleModalOpen(true);
+            saveLocally(newEntry);
+          }
+        } else {
+          saveLocally(newEntry);
+        }
+        setActiveTab('leaderboard');
+      };
+
+      const saveLocally = (entry) => {
+        const updated = [...brackets.filter(b => b.name !== entry.name), entry];
+        setBrackets(updated);
+        localStorage.setItem('mlb_brackets_local_2026', JSON.stringify(updated));
+        alert('Saved locally on this device!');
+      };
+
+      const deleteBracket = async (bracketId, name) => {
+        if (!confirm(`Are you sure you want to delete the submission for "${name}"?`)) return;
+
+        if (cloudStatus === 'connected' && dbRef) {
+          try {
+            await dbRef.collection('mlb_brackets_2026').doc(bracketId).delete();
+            alert('Submission deleted from live database.');
+          } catch (e) {
+            console.error('Delete error:', e);
+            alert('Failed to delete submission.');
+          }
+        } else {
+          const updated = brackets.filter(b => b.id !== bracketId);
+          setBrackets(updated);
+          localStorage.setItem('mlb_brackets_local_2026', JSON.stringify(updated));
+          alert('Submission deleted locally.');
+        }
+      };
+
+      const saveOfficialResult = async (matchKey, winner) => {
+        const updated = { ...actualResults, [matchKey]: winner };
+        setActualResults(updated);
+        if (cloudStatus === 'connected' && dbRef) {
+          try {
+            await dbRef.collection('mlb_results_2026').doc('official').set(updated);
+          } catch(e) { setRuleModalOpen(true); }
+        } else {
+          localStorage.setItem('mlb_results_local_2026', JSON.stringify(updated));
+        }
+      };
+
+      const sortedBrackets = brackets
+        .map(b => ({ ...b, score: calculateScore(b.picks || {}) }))
+        .sort((a,b) => b.score - a.score);
+
+      return (
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+          {/* Header */}
+          <header className="flex flex-col md:flex-row items-center justify-between pb-4 sm:pb-6 border-b border-slate-800 mb-6 gap-4">
+            <div className="text-center md:text-left">
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center justify-center md:justify-start gap-2">
+                ⚾ 2026 POSTSEASON PICTURE
+              </h1>
+              <p className="text-slate-400 text-xs sm:text-sm">Fill out your bracket & track live group scores</p>
+            </div>
+
+            {/* Cloud Status Indicator */}
+            <div className="flex items-center gap-2 sm:gap-3 bg-slate-900 border border-slate-800 rounded-full px-3 sm:px-4 py-1.5 text-xs">
+              <span className={`w-2.5 h-2.5 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+              <span className="font-semibold text-slate-300">
+                {cloudStatus === 'connected' ? 'Cloud Live' : 'Offline Mode'}
+              </span>
+              {cloudStatus === 'fallback' && (
+                <button onClick={() => setRuleModalOpen(true)} className="text-amber-400 underline ml-2 font-bold">
+                  Fix Rules?
+                </button>
+              )}
+            </div>
+
+            {/* Navigation Tabs */}
+            <nav className="flex w-full md:w-auto gap-1 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+              <button 
+                onClick={() => setActiveTab('bracket')}
+                className={`flex-1 md:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'bracket' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                Fill Bracket
+              </button>
+              <button 
+                onClick={() => setActiveTab('leaderboard')}
+                className={`flex-1 md:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                Leaderboard ({brackets.length})
+              </button>
+              <button 
+                onClick={() => setActiveTab('admin')}
+                className={`flex-1 md:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                Admin
+              </button>
+            </nav>
+          </header>
+
+          {/* FIRESTORE RULES HELP MODAL */}
+          {ruleModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4">
+                <h3 className="text-lg font-bold text-amber-400 flex items-center gap-2">
+                  ⚠️ Step Required in Firebase Console
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Your website is connected to Firebase, but Firebase Firestore Security Rules are currently set to block writes.
+                </p>
+                <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[11px] text-emerald-400 overflow-x-auto">
+                  {`rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}`}
+                </div>
+                <p className="text-xs text-slate-400">
+                  Paste the rule snippet above into your Firebase Console under <strong>Firestore Database → Rules</strong> tab and click <strong>Publish</strong>.
+                </p>
+                <button 
+                  onClick={() => setRuleModalOpen(false)}
+                  className="w-full py-2 bg-amber-500 text-slate-950 font-bold rounded-lg hover:bg-amber-400">
+                  I Published It / Close
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* BRACKET TAB */}
+          {activeTab === 'bracket' && (
+            <div className="space-y-6">
+              {/* User Name & Tiebreaker Bar */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
+                <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider self-start sm:self-center">Your Name:</span>
+                  <input 
+                    type="text"
+                    placeholder="Enter your name..."
+                    value={userName}
+                    onChange={e => setUserName(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 w-full md:w-64"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider self-start sm:self-center">World Series Runs Tiebreaker:</span>
+                  <input 
+                    type="number"
+                    placeholder="e.g. 35"
+                    value={tbRuns}
+                    onChange={e => setTbRuns(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 w-full sm:w-24"
+                  />
+                </div>
+                <button 
+                  onClick={saveBracket}
+                  className="w-full md:w-auto px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 font-bold rounded-xl text-sm shadow-lg hover:from-blue-500 hover:to-indigo-500 transition-all">
+                  Submit Bracket
+                </button>
+              </div>
+
+              {/* Bracket Layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-7 gap-4 items-center min-h-[600px]">
+                {/* AL Wild Card */}
+                <div className="space-y-6">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">AL Wild Card</h3>
+                  {INITIAL_TEAMS.al.wc.map(m => (
+                    <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                      <button 
+                        onClick={() => handlePick(m.id, m.name)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.name ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
+                        <span>#{m.seed} {m.name}</span>
+                        {picks[m.id] === m.name && <span>✓</span>}
+                      </button>
+                      <button 
+                        onClick={() => handlePick(m.id, m.opponent)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.opponent ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
+                        <span>#{m.oppSeed} {m.opponent}</span>
+                        {picks[m.id] === m.opponent && <span>✓</span>}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ALDS */}
+                <div className="space-y-6">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">ALDS</h3>
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                    <button 
+                      onClick={() => handlePick('alds_1', 'Rays')}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_1'] === 'Rays' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
+                      <span>#1 Rays</span>
+                    </button>
+                    <button 
+                      onClick={() => picks['al_wc2'] && handlePick('alds_1', picks['al_wc2'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_1'] === picks['al_wc2'] && picks['al_wc2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      <span>{picks['al_wc2'] || 'AL WC2 Winner'}</span>
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                    <button 
+                      onClick={() => handlePick('alds_2', 'Guardians')}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_2'] === 'Guardians' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
+                      <span>#2 Guardians</span>
+                    </button>
+                    <button 
+                      onClick={() => picks['al_wc1'] && handlePick('alds_2', picks['al_wc1'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_2'] === picks['al_wc1'] && picks['al_wc1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      <span>{picks['al_wc1'] || 'AL WC1 Winner'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* ALCS */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">ALCS</h3>
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                    <button 
+                      onClick={() => picks['alds_1'] && handlePick('alcs', picks['alds_1'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['alcs'] === picks['alds_1'] && picks['alds_1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      {picks['alds_1'] || 'ALDS 1 Winner'}
+                    </button>
+                    <button 
+                      onClick={() => picks['alds_2'] && handlePick('alcs', picks['alds_2'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['alcs'] === picks['alds_2'] && picks['alds_2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      {picks['alds_2'] || 'ALDS 2 Winner'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* WORLD SERIES */}
+                <div className="bg-gradient-to-b from-amber-500/10 to-blue-500/10 border border-amber-500/30 rounded-2xl p-4 text-center space-y-3">
+                  <h2 className="text-xs font-black tracking-widest text-amber-400 uppercase">World Series</h2>
+                  <div className="space-y-2">
+                    <button 
+                      onClick={() => picks['alcs'] && handlePick('ws', picks['alcs'])}
+                      className={`w-full py-2 px-3 rounded-xl font-black text-xs transition-all ${picks['ws'] === picks['alcs'] && picks['alcs'] ? 'bg-amber-500 text-slate-950 shadow-lg scale-105' : 'bg-slate-900 border border-slate-800'}`}>
+                      {picks['alcs'] || 'AL Champion'}
+                    </button>
+                    <div className="text-[10px] font-black text-slate-500">VS</div>
+                    <button 
+                      onClick={() => picks['nlcs'] && handlePick('ws', picks['nlcs'])}
+                      className={`w-full py-2 px-3 rounded-xl font-black text-xs transition-all ${picks['ws'] === picks['nlcs'] && picks['nlcs'] ? 'bg-amber-500 text-slate-950 shadow-lg scale-105' : 'bg-slate-900 border border-slate-800'}`}>
+                      {picks['nlcs'] || 'NL Champion'}
+                    </button>
+                  </div>
+                  {picks['ws'] && (
+                    <div className="pt-2 text-xs font-bold text-amber-300">
+                      🏆 Picked Champion: <br/>
+                      <span className="text-sm font-black text-white">{picks['ws']}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* NLCS */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">NLCS</h3>
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                    <button 
+                      onClick={() => picks['nlds_1'] && handlePick('nlcs', picks['nlds_1'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['nlcs'] === picks['nlds_1'] && picks['nlds_1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      {picks['nlds_1'] || 'NLDS 1 Winner'}
+                    </button>
+                    <button 
+                      onClick={() => picks['nlds_2'] && handlePick('nlcs', picks['nlds_2'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['nlcs'] === picks['nlds_2'] && picks['nlds_2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      {picks['nlds_2'] || 'NLDS 2 Winner'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* NLDS */}
+                <div className="space-y-6">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">NLDS</h3>
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                    <button 
+                      onClick={() => handlePick('nlds_1', 'Brewers')}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_1'] === 'Brewers' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
+                      <span>#1 Brewers</span>
+                    </button>
+                    <button 
+                      onClick={() => picks['nl_wc2'] && handlePick('nlds_1', picks['nl_wc2'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_1'] === picks['nl_wc2'] && picks['nl_wc2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      <span>{picks['nl_wc2'] || 'NL WC2 Winner'}</span>
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                    <button 
+                      onClick={() => handlePick('nlds_2', 'Dodgers')}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_2'] === 'Dodgers' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
+                      <span>#2 Dodgers</span>
+                    </button>
+                    <button 
+                      onClick={() => picks['nl_wc1'] && handlePick('nlds_2', picks['nl_wc1'])}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_2'] === picks['nl_wc1'] && picks['nl_wc1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
+                      <span>{picks['nl_wc1'] || 'NL WC1 Winner'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* NL Wild Card */}
+                <div className="space-y-6">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">NL Wild Card</h3>
+                  {INITIAL_TEAMS.nl.wc.map(m => (
+                    <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
+                      <button 
+                        onClick={() => handlePick(m.id, m.name)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.name ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
+                        <span>#{m.seed} {m.name}</span>
+                        {picks[m.id] === m.name && <span>✓</span>}
+                      </button>
+                      <button 
+                        onClick={() => handlePick(m.id, m.opponent)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.opponent ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
+                        <span>#{m.oppSeed} {m.opponent}</span>
+                        {picks[m.id] === m.opponent && <span>✓</span>}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* LEADERBOARD TAB */}
+          {activeTab === 'leaderboard' && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg sm:text-xl font-black text-white">Live Group Leaderboard</h2>
+                <span className="text-xs text-slate-400">{brackets.length} Submissions</span>
+              </div>
+
+              {brackets.length === 0 ? (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-sm">
+                  No brackets submitted yet! Fill out your bracket to lead the board.
+                </div>
+              ) : (
+                <>
+                  {/* MOBILE VIEW (Card Layout) */}
+                  <div className="block md:hidden space-y-3">
+                    {sortedBrackets.map((b, idx) => (
+                      <div key={b.id || idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-md">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-slate-950 border border-slate-800 text-slate-300 font-black text-xs px-2.5 py-1 rounded-lg">
+                              #{idx + 1}
+                            </span>
+                            <span className="font-black text-white text-base">{b.name}</span>
+                          </div>
+                          <span className="font-black text-emerald-400 text-lg bg-emerald-950/40 border border-emerald-500/20 px-3 py-0.5 rounded-xl">
+                            {b.score} pts
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                          <div>
+                            <span className="text-slate-500 block text-[10px] uppercase font-bold">Predicted Champ</span>
+                            <span className="font-bold text-amber-400">{b.picks?.ws || 'None'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 block text-[10px] uppercase font-bold">Tiebreaker Runs</span>
+                            <span className="font-bold text-slate-300">{b.tbRuns || 0} runs</span>
+                          </div>
+                        </div>
+
+                        <button 
+                          onClick={() => setViewingBracket(b)}
+                          className="w-full py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5">
+                          <span>🔍 View Full Bracket Picks</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* DESKTOP VIEW (Table Layout) */}
+                  <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-800">
+                        <tr>
+                          <th className="px-4 py-3">Rank</th>
+                          <th className="px-4 py-3">Participant</th>
+                          <th className="px-4 py-3">Predicted Champion</th>
+                          <th className="px-4 py-3">Tiebreaker</th>
+                          <th className="px-4 py-3">Points</th>
+                          <th className="px-4 py-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {sortedBrackets.map((b, idx) => (
+                          <tr key={b.id || idx} className="hover:bg-slate-800/50 transition-colors">
+                            <td className="px-4 py-3 font-bold text-slate-400">#{idx + 1}</td>
+                            <td className="px-4 py-3 font-black text-white">{b.name}</td>
+                            <td className="px-4 py-3 text-amber-400 font-bold">{b.picks?.ws || 'None'}</td>
+                            <td className="px-4 py-3 text-slate-400">{b.tbRuns} runs</td>
+                            <td className="px-4 py-3 font-black text-emerald-400 text-base">{b.score} pts</td>
+                            <td className="px-4 py-3 text-right">
+                              <button 
+                                onClick={() => setViewingBracket(b)}
+                                className="text-xs bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white px-3 py-1.5 rounded-lg font-bold border border-blue-500/30 transition-all">
+                                View Picks
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* VIEW BRACKET PICKS MODAL */}
+          {viewingBracket && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-4 sm:p-6 space-y-4 max-h-[85vh] overflow-y-auto shadow-2xl">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white">{viewingBracket.name}'s Picks</h3>
+                    <p className="text-xs text-slate-400">WS Tiebreaker: <span className="text-amber-400 font-bold">{viewingBracket.tbRuns} runs</span></p>
+                  </div>
+                  <button onClick={() => setViewingBracket(null)} className="text-slate-400 hover:text-white text-xs sm:text-sm font-bold bg-slate-800 px-3 py-1.5 rounded-lg">✕ Close</button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  {Object.entries(viewingBracket.picks || {}).map(([match, team]) => (
+                    <div key={match} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 flex justify-between items-center">
+                      <span className="text-slate-500 uppercase font-mono text-[10px]">{match.replace('_', ' ')}:</span>
+                      <span className="font-bold text-amber-400">{team}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <button 
+                  onClick={() => setViewingBracket(null)}
+                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition-all">
+                  Close Window
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ADMIN TAB */}
+          {activeTab === 'admin' && (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-6">
+              {!isAdmin ? (
+                <div className="max-w-md mx-auto space-y-4">
+                  <h3 className="text-lg font-bold text-white text-center">Admin Controls</h3>
+                  <input 
+                    type="password"
+                    placeholder="Enter Admin Passcode (Default: 2026)"
+                    value={adminPass}
+                    onChange={e => setAdminPass(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                  />
+                  <button 
+                    onClick={() => {
+                      if (adminPass === '2026') setIsAdmin(true);
+                      else alert('Incorrect passcode');
+                    }}
+                    className="w-full py-2.5 bg-blue-600 font-bold rounded-xl text-sm hover:bg-blue-500 transition-all">
+                    Unlock Admin
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {/* DELETE SUBMISSIONS MANAGER */}
+                  <div className="space-y-4">
+                    <h3 className="text-base sm:text-lg font-bold text-rose-400">Manage & Delete Submissions</h3>
+                    {brackets.length === 0 ? (
+                      <p className="text-xs text-slate-500">No submissions found.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {brackets.map(b => (
+                          <div key={b.id} className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
+                            <div>
+                              <div className="font-bold text-white text-sm">{b.name}</div>
+                              <div className="text-[10px] text-slate-500">Picked: {b.picks?.ws || 'No Champion'}</div>
+                            </div>
+                            <button 
+                              onClick={() => deleteBracket(b.id, b.name)}
+                              className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg transition-all">
+                              Delete
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <hr className="border-slate-800" />
+
+                  {/* SET OFFICIAL RESULTS */}
+                  <div className="space-y-4">
+                    <h3 className="text-base sm:text-lg font-bold text-white">Set Official Winners (Calculates Scores)</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      {['al_wc1', 'al_wc2', 'nl_wc1', 'nl_wc2', 'alds_1', 'alds_2', 'nlds_1', 'nlds_2', 'alcs', 'nlcs', 'ws'].map(key => (
+                        <div key={key} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                          <span className="font-mono text-slate-400 uppercase text-[10px]">{key}</span>
+                          <input 
+                            type="text"
+                            placeholder="Winner name..."
+                            value={actualResults[key] || ''}
+                            onChange={e => saveOfficialResult(key, e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
