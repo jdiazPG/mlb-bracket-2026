@@ -66,6 +66,8 @@
       const [isAdmin, setIsAdmin] = useState(false);
       const [viewingBracket, setViewingBracket] = useState(null);
       const [ruleModalOpen, setRuleModalOpen] = useState(false);
+      const [isSyncing, setIsSyncing] = useState(false);
+      const [lastSyncMessage, setLastSyncMessage] = useState('');
 
       useEffect(() => {
         try {
@@ -106,19 +108,6 @@
         }
       }, []);
 
-      useEffect(() => {
-        if (cloudStatus === 'fallback') {
-          const saved = localStorage.getItem('mlb_brackets_local_2026');
-          if (saved) {
-            try { setBrackets(JSON.parse(saved)); } catch(e){}
-          }
-          const savedRes = localStorage.getItem('mlb_results_local_2026');
-          if (savedRes) {
-            try { setActualResults(JSON.parse(savedRes)); } catch(e){}
-          }
-        }
-      }, [cloudStatus]);
-
       const handlePick = (matchupId, teamName) => {
         setPicks(prev => ({ ...prev, [matchupId]: teamName }));
       };
@@ -127,7 +116,7 @@
         let score = 0;
         const weights = { wc: 10, ds: 20, lcs: 40, ws: 80 };
         Object.keys(bracketPicks).forEach(key => {
-          if (actualResults[key] && actualResults[key] === bracketPicks[key]) {
+          if (actualResults[key] && actualResults[key].toLowerCase() === (bracketPicks[key] || '').toLowerCase()) {
             if (key.includes('wc')) score += weights.wc;
             else if (key.includes('ds')) score += weights.ds;
             else if (key.includes('cs')) score += weights.lcs;
@@ -204,13 +193,63 @@
         }
       };
 
+      // LIVE ESPN API AUTO-SYNC
+      const syncLiveScores = async () => {
+        setIsSyncing(true);
+        setLastSyncMessage('Fetching live scoreboard from ESPN API...');
+        try {
+          const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard');
+          const data = await res.json();
+          
+          let updatedCount = 0;
+          const updatedResults = { ...actualResults };
+
+          if (data && data.events) {
+            data.events.forEach(event => {
+              const competition = event.competitions?.[0];
+              const completed = competition?.status?.type?.completed;
+              if (completed) {
+                const winners = competition.competitors.filter(c => c.winner);
+                if (winners.length > 0) {
+                  const winnerName = winners[0].team.shortDisplayName || winners[0].team.name;
+                  
+                  // Match winner to team name in brackets
+                  const allTeams = ['Astros', 'White Sox', 'Yankees', 'Red Sox', 'Braves', 'Phillies', 'Padres', 'Cubs', 'Rays', 'Guardians', 'Brewers', 'Dodgers'];
+                  const matchedTeam = allTeams.find(t => t.toLowerCase() === winnerName.toLowerCase() || winnerName.includes(t));
+                  
+                  if (matchedTeam) {
+                    // Check which Wild Card slot it belongs to
+                    if (['Astros', 'White Sox'].includes(matchedTeam)) updatedResults['al_wc1'] = matchedTeam;
+                    if (['Yankees', 'Red Sox'].includes(matchedTeam)) updatedResults['al_wc2'] = matchedTeam;
+                    if (['Braves', 'Phillies'].includes(matchedTeam)) updatedResults['nl_wc1'] = matchedTeam;
+                    if (['Padres', 'Cubs'].includes(matchedTeam)) updatedResults['nl_wc2'] = matchedTeam;
+                    updatedCount++;
+                  }
+                }
+              }
+            });
+          }
+
+          setActualResults(updatedResults);
+          if (cloudStatus === 'connected' && dbRef) {
+            await dbRef.collection('mlb_results_2026').doc('official').set(updatedResults);
+          }
+
+          setLastSyncMessage(`✅ Synced! Scanned ${data.events?.length || 0} recent games. Updated ${updatedCount} winners.`);
+        } catch (err) {
+          console.error('ESPN API error:', err);
+          setLastSyncMessage('⚠️ Could not fetch live ESPN scores. You can still enter winners manually below.');
+        } finally {
+          setIsSyncing(false);
+        }
+      };
+
       const sortedBrackets = brackets
         .map(b => ({ ...b, score: calculateScore(b.picks || {}) }))
         .sort((a,b) => b.score - a.score);
 
       return (
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-          {/* Header */}
           <header className="flex flex-col md:flex-row items-center justify-between pb-4 sm:pb-6 border-b border-slate-800 mb-6 gap-4">
             <div className="text-center md:text-left">
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center justify-center md:justify-start gap-2">
@@ -219,7 +258,6 @@
               <p className="text-slate-400 text-xs sm:text-sm">Fill out your bracket & track live group scores</p>
             </div>
 
-            {/* Cloud Status Indicator */}
             <div className="flex items-center gap-2 sm:gap-3 bg-slate-900 border border-slate-800 rounded-full px-3 sm:px-4 py-1.5 text-xs">
               <span className={`w-2.5 h-2.5 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
               <span className="font-semibold text-slate-300">
@@ -232,7 +270,6 @@
               )}
             </div>
 
-            {/* Navigation Tabs */}
             <nav className="flex w-full md:w-auto gap-1 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
               <button 
                 onClick={() => setActiveTab('bracket')}
@@ -252,7 +289,6 @@
             </nav>
           </header>
 
-          {/* FIRESTORE RULES HELP MODAL */}
           {ruleModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4">
@@ -280,7 +316,6 @@
           {/* BRACKET TAB */}
           {activeTab === 'bracket' && (
             <div className="space-y-6">
-              {/* User Name & Tiebreaker Bar */}
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider self-start sm:self-center">Your Name:</span>
@@ -309,7 +344,6 @@
                 </button>
               </div>
 
-              {/* Bracket Layout */}
               <div className="grid grid-cols-1 lg:grid-cols-7 gap-4 items-center min-h-[600px]">
                 {/* AL Wild Card */}
                 <div className="space-y-6">
@@ -488,7 +522,6 @@
                 </div>
               ) : (
                 <>
-                  {/* MOBILE VIEW (Card Layout) */}
                   <div className="block md:hidden space-y-3">
                     {sortedBrackets.map((b, idx) => (
                       <div key={b.id || idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-md">
@@ -524,7 +557,6 @@
                     ))}
                   </div>
 
-                  {/* DESKTOP VIEW (Table Layout) */}
                   <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-sm">
                       <thead className="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-800">
@@ -616,6 +648,29 @@
                 </div>
               ) : (
                 <div className="space-y-8">
+                  {/* AUTO API SYNC SECTION */}
+                  <div className="bg-slate-950 border border-blue-500/30 rounded-2xl p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          ⚡ Auto-Sync Live MLB Scores
+                        </h3>
+                        <p className="text-xs text-slate-400">Pulls completed games directly from ESPN MLB API and updates winners automatically.</p>
+                      </div>
+                      <button 
+                        onClick={syncLiveScores}
+                        disabled={isSyncing}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                        {isSyncing ? 'Fetching...' : 'Fetch Live Scores Now'}
+                      </button>
+                    </div>
+                    {lastSyncMessage && (
+                      <div className="text-xs font-mono text-emerald-400 bg-emerald-950/30 p-2 rounded-lg border border-emerald-500/20">
+                        {lastSyncMessage}
+                      </div>
+                    )}
+                  </div>
+
                   {/* DELETE SUBMISSIONS MANAGER */}
                   <div className="space-y-4">
                     <h3 className="text-base sm:text-lg font-bold text-rose-400">Manage & Delete Submissions</h3>
@@ -644,7 +699,7 @@
 
                   {/* SET OFFICIAL RESULTS */}
                   <div className="space-y-4">
-                    <h3 className="text-base sm:text-lg font-bold text-white">Set Official Winners (Calculates Scores)</h3>
+                    <h3 className="text-base sm:text-lg font-bold text-white">Manual Results Override (Calculates Scores)</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                       {['al_wc1', 'al_wc2', 'nl_wc1', 'nl_wc2', 'alds_1', 'alds_2', 'nlds_1', 'nlds_2', 'alcs', 'nlcs', 'ws'].map(key => (
                         <div key={key} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
