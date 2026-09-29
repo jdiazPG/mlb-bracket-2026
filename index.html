@@ -15,7 +15,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-blue-600 selection:text-white">
   <div id="root"></div>
 
   <script type="text/babel">
@@ -30,25 +30,35 @@
       appId: "1:189528601083:web:0a660e688139c157639b5e"
     };
 
+    // OFFICIAL MLB LOGO DIRECTORY (ESPN HIGH-RES CDN)
+    const TEAM_LOGOS = {
+      'Astros': 'https://a.espncdn.com/i/teamlogos/mlb/500/hou.png',
+      'White Sox': 'https://a.espncdn.com/i/teamlogos/mlb/500/chw.png',
+      'Yankees': 'https://a.espncdn.com/i/teamlogos/mlb/500/nyy.png',
+      'Red Sox': 'https://a.espncdn.com/i/teamlogos/mlb/500/bos.png',
+      'Rays': 'https://a.espncdn.com/i/teamlogos/mlb/500/tb.png',
+      'Guardians': 'https://a.espncdn.com/i/teamlogos/mlb/500/cle.png',
+      'Braves': 'https://a.espncdn.com/i/teamlogos/mlb/500/atl.png',
+      'Phillies': 'https://a.espncdn.com/i/teamlogos/mlb/500/phi.png',
+      'Padres': 'https://a.espncdn.com/i/teamlogos/mlb/500/sd.png',
+      'Cubs': 'https://a.espncdn.com/i/teamlogos/mlb/500/chc.png',
+      'Brewers': 'https://a.espncdn.com/i/teamlogos/mlb/500/mil.png',
+      'Dodgers': 'https://a.espncdn.com/i/teamlogos/mlb/500/lad.png'
+    };
+
+    const MLB_LOGO = 'https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png';
+
     const INITIAL_TEAMS = {
       al: {
         wc: [
           { id: 'al_wc1', name: 'Astros', seed: 3, opponent: 'White Sox', oppSeed: 6 },
           { id: 'al_wc2', name: 'Yankees', seed: 4, opponent: 'Red Sox', oppSeed: 5 }
-        ],
-        byes: [
-          { seed: 1, name: 'Rays' },
-          { seed: 2, name: 'Guardians' }
         ]
       },
       nl: {
         wc: [
           { id: 'nl_wc1', name: 'Braves', seed: 3, opponent: 'Phillies', oppSeed: 6 },
           { id: 'nl_wc2', name: 'Padres', seed: 4, opponent: 'Cubs', oppSeed: 5 }
-        ],
-        byes: [
-          { seed: 1, name: 'Brewers' },
-          { seed: 2, name: 'Dodgers' }
         ]
       }
     };
@@ -193,7 +203,6 @@
         }
       };
 
-      // LIVE ESPN API AUTO-SYNC
       const syncLiveScores = async () => {
         setIsSyncing(true);
         setLastSyncMessage('Fetching live scoreboard from ESPN API...');
@@ -212,13 +221,10 @@
                 const winners = competition.competitors.filter(c => c.winner);
                 if (winners.length > 0) {
                   const winnerName = winners[0].team.shortDisplayName || winners[0].team.name;
-                  
-                  // Match winner to team name in brackets
-                  const allTeams = ['Astros', 'White Sox', 'Yankees', 'Red Sox', 'Braves', 'Phillies', 'Padres', 'Cubs', 'Rays', 'Guardians', 'Brewers', 'Dodgers'];
+                  const allTeams = Object.keys(TEAM_LOGOS);
                   const matchedTeam = allTeams.find(t => t.toLowerCase() === winnerName.toLowerCase() || winnerName.includes(t));
                   
                   if (matchedTeam) {
-                    // Check which Wild Card slot it belongs to
                     if (['Astros', 'White Sox'].includes(matchedTeam)) updatedResults['al_wc1'] = matchedTeam;
                     if (['Yankees', 'Red Sox'].includes(matchedTeam)) updatedResults['al_wc2'] = matchedTeam;
                     if (['Braves', 'Phillies'].includes(matchedTeam)) updatedResults['nl_wc1'] = matchedTeam;
@@ -238,7 +244,7 @@
           setLastSyncMessage(`✅ Synced! Scanned ${data.events?.length || 0} recent games. Updated ${updatedCount} winners.`);
         } catch (err) {
           console.error('ESPN API error:', err);
-          setLastSyncMessage('⚠️ Could not fetch live ESPN scores. You can still enter winners manually below.');
+          setLastSyncMessage('⚠️ Could not fetch live ESPN scores.');
         } finally {
           setIsSyncing(false);
         }
@@ -248,17 +254,55 @@
         .map(b => ({ ...b, score: calculateScore(b.picks || {}) }))
         .sort((a,b) => b.score - a.score);
 
+      const renderTeamCard = (teamName, seed, isSelected, onClick, disabled = false) => {
+        const logoUrl = TEAM_LOGOS[teamName];
+        return (
+          <button
+            onClick={onClick}
+            disabled={disabled}
+            className={`w-full py-2 px-2.5 rounded-xl text-xs font-extrabold flex items-center justify-between transition-all duration-200 border ${
+              isSelected 
+                ? 'bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-600/30 ring-2 ring-blue-400/50 scale-[1.02]' 
+                : disabled 
+                ? 'bg-slate-950/40 text-slate-600 border-slate-900 cursor-not-allowed'
+                : 'bg-slate-900/90 text-slate-200 border-slate-800 hover:bg-slate-800 hover:border-slate-700'
+            }`}>
+            <div className="flex items-center gap-2.5 min-w-0">
+              {seed && (
+                <span className={`w-5 h-5 flex items-center justify-center rotate-45 text-[10px] font-black rounded-sm border ${
+                  isSelected ? 'bg-white text-blue-950 border-white' : 'bg-slate-950 text-slate-400 border-slate-700'
+                }`}>
+                  <span className="-rotate-45">{seed}</span>
+                </span>
+              )}
+              {logoUrl ? (
+                <img src={logoUrl} alt={teamName} className="w-6 h-6 object-contain filter drop-shadow" />
+              ) : (
+                <div className="w-6 h-6 rounded-full bg-slate-800 border border-slate-700" />
+              )}
+              <span className="truncate tracking-tight">{teamName || 'Select Team'}</span>
+            </div>
+            {isSelected && <span className="text-white font-black ml-1 text-xs">✓</span>}
+          </button>
+        );
+      };
+
       return (
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-          <header className="flex flex-col md:flex-row items-center justify-between pb-4 sm:pb-6 border-b border-slate-800 mb-6 gap-4">
-            <div className="text-center md:text-left">
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center justify-center md:justify-start gap-2">
-                ⚾ 2026 POSTSEASON PICTURE
-              </h1>
-              <p className="text-slate-400 text-xs sm:text-sm">Fill out your bracket & track live group scores</p>
+          {/* Header Graphic Branding */}
+          <header className="flex flex-col md:flex-row items-center justify-between pb-6 border-b border-slate-800/80 mb-6 gap-4">
+            <div className="flex items-center gap-4 text-center md:text-left">
+              <img src={MLB_LOGO} alt="MLB" className="w-12 h-12 object-contain filter drop-shadow-md hidden sm:block" />
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-black tracking-wider text-white flex items-center justify-center md:justify-start gap-2 uppercase">
+                  POSTSEASON PICTURE <span className="text-blue-500 font-black">2026</span>
+                </h1>
+                <p className="text-slate-400 text-xs sm:text-sm font-semibold tracking-wide">NO TIME LIKE OCTOBER • MAKE YOUR PICKS</p>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3 bg-slate-900 border border-slate-800 rounded-full px-3 sm:px-4 py-1.5 text-xs">
+            {/* Cloud Status Indicator */}
+            <div className="flex items-center gap-2 sm:gap-3 bg-slate-900 border border-slate-800 rounded-full px-3.5 sm:px-4 py-1.5 text-xs">
               <span className={`w-2.5 h-2.5 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
               <span className="font-semibold text-slate-300">
                 {cloudStatus === 'connected' ? 'Cloud Live' : 'Offline Mode'}
@@ -270,25 +314,27 @@
               )}
             </div>
 
-            <nav className="flex w-full md:w-auto gap-1 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+            {/* Navigation Tabs */}
+            <nav className="flex w-full md:w-auto gap-1 bg-slate-900/90 p-1.5 rounded-xl border border-slate-800">
               <button 
                 onClick={() => setActiveTab('bracket')}
-                className={`flex-1 md:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'bracket' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-xs sm:text-sm font-black transition-all ${activeTab === 'bracket' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
                 Fill Bracket
               </button>
               <button 
                 onClick={() => setActiveTab('leaderboard')}
-                className={`flex-1 md:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'leaderboard' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-xs sm:text-sm font-black transition-all ${activeTab === 'leaderboard' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
                 Leaderboard ({brackets.length})
               </button>
               <button 
                 onClick={() => setActiveTab('admin')}
-                className={`flex-1 md:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+                className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-xs sm:text-sm font-black transition-all ${activeTab === 'admin' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
                 Admin
               </button>
             </nav>
           </header>
 
+          {/* FIRESTORE RULES HELP MODAL */}
           {ruleModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4">
@@ -316,194 +362,216 @@
           {/* BRACKET TAB */}
           {activeTab === 'bracket' && (
             <div className="space-y-6">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
+              {/* User Entry Bar */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between backdrop-blur-sm">
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider self-start sm:self-center">Your Name:</span>
                   <input 
                     type="text"
-                    placeholder="Enter your name..."
+                    placeholder="Enter participant name..."
                     value={userName}
                     onChange={e => setUserName(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 w-full md:w-64"
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 w-full md:w-64 font-semibold"
                   />
                 </div>
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider self-start sm:self-center">World Series Runs Tiebreaker:</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider self-start sm:self-center">World Series Total Runs Tiebreaker:</span>
                   <input 
                     type="number"
                     placeholder="e.g. 35"
                     value={tbRuns}
                     onChange={e => setTbRuns(e.target.value)}
-                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 w-full sm:w-24"
+                    className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500 w-full sm:w-28 font-semibold"
                   />
                 </div>
                 <button 
                   onClick={saveBracket}
-                  className="w-full md:w-auto px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 font-bold rounded-xl text-sm shadow-lg hover:from-blue-500 hover:to-indigo-500 transition-all">
+                  className="w-full md:w-auto px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 font-black rounded-xl text-sm shadow-lg hover:from-blue-500 hover:to-indigo-500 transition-all uppercase tracking-wider">
                   Submit Bracket
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-7 gap-4 items-center min-h-[600px]">
+              {/* Graphical Bracket Grid Layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-7 gap-3 items-center min-h-[640px] bg-slate-900/30 p-3 sm:p-5 rounded-3xl border border-slate-800/80 backdrop-blur-sm">
+                
                 {/* AL Wild Card */}
-                <div className="space-y-6">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">AL Wild Card</h3>
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2.5 py-1 rounded-full">AMERICAN LEAGUE</span>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white mt-1.5">WILD CARD</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">Best of 3</span>
+                  </div>
                   {INITIAL_TEAMS.al.wc.map(m => (
-                    <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                      <button 
-                        onClick={() => handlePick(m.id, m.name)}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.name ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
-                        <span>#{m.seed} {m.name}</span>
-                        {picks[m.id] === m.name && <span>✓</span>}
-                      </button>
-                      <button 
-                        onClick={() => handlePick(m.id, m.opponent)}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.opponent ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
-                        <span>#{m.oppSeed} {m.opponent}</span>
-                        {picks[m.id] === m.opponent && <span>✓</span>}
-                      </button>
+                    <div key={m.id} className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                      {renderTeamCard(m.name, m.seed, picks[m.id] === m.name, () => handlePick(m.id, m.name))}
+                      {renderTeamCard(m.opponent, m.oppSeed, picks[m.id] === m.opponent, () => handlePick(m.id, m.opponent))}
                     </div>
                   ))}
                 </div>
 
                 {/* ALDS */}
-                <div className="space-y-6">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">ALDS</h3>
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                    <button 
-                      onClick={() => handlePick('alds_1', 'Rays')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_1'] === 'Rays' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
-                      <span>#1 Rays</span>
-                    </button>
-                    <button 
-                      onClick={() => picks['al_wc2'] && handlePick('alds_1', picks['al_wc2'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_1'] === picks['al_wc2'] && picks['al_wc2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      <span>{picks['al_wc2'] || 'AL WC2 Winner'}</span>
-                    </button>
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">ALDS</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">Best of 5</span>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                    {renderTeamCard('Rays', 1, picks['alds_1'] === 'Rays', () => handlePick('alds_1', 'Rays'))}
+                    {renderTeamCard(
+                      picks['al_wc2'] || 'AL WC2 Winner', 
+                      null, 
+                      picks['alds_1'] === picks['al_wc2'] && picks['al_wc2'], 
+                      () => picks['al_wc2'] && handlePick('alds_1', picks['al_wc2']),
+                      !picks['al_wc2']
+                    )}
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                    <button 
-                      onClick={() => handlePick('alds_2', 'Guardians')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_2'] === 'Guardians' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
-                      <span>#2 Guardians</span>
-                    </button>
-                    <button 
-                      onClick={() => picks['al_wc1'] && handlePick('alds_2', picks['al_wc1'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['alds_2'] === picks['al_wc1'] && picks['al_wc1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      <span>{picks['al_wc1'] || 'AL WC1 Winner'}</span>
-                    </button>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                    {renderTeamCard('Guardians', 2, picks['alds_2'] === 'Guardians', () => handlePick('alds_2', 'Guardians'))}
+                    {renderTeamCard(
+                      picks['al_wc1'] || 'AL WC1 Winner', 
+                      null, 
+                      picks['alds_2'] === picks['al_wc1'] && picks['al_wc1'], 
+                      () => picks['al_wc1'] && handlePick('alds_2', picks['al_wc1']),
+                      !picks['al_wc1']
+                    )}
                   </div>
                 </div>
 
                 {/* ALCS */}
                 <div className="space-y-4">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">ALCS</h3>
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                    <button 
-                      onClick={() => picks['alds_1'] && handlePick('alcs', picks['alds_1'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['alcs'] === picks['alds_1'] && picks['alds_1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      {picks['alds_1'] || 'ALDS 1 Winner'}
-                    </button>
-                    <button 
-                      onClick={() => picks['alds_2'] && handlePick('alcs', picks['alds_2'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['alcs'] === picks['alds_2'] && picks['alds_2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      {picks['alds_2'] || 'ALDS 2 Winner'}
-                    </button>
+                  <div className="text-center">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">ALCS</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">Best of 7</span>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                    {renderTeamCard(
+                      picks['alds_1'] || 'ALDS 1 Winner', 
+                      null, 
+                      picks['alcs'] === picks['alds_1'] && picks['alds_1'], 
+                      () => picks['alds_1'] && handlePick('alcs', picks['alds_1']),
+                      !picks['alds_1']
+                    )}
+                    {renderTeamCard(
+                      picks['alds_2'] || 'ALDS 2 Winner', 
+                      null, 
+                      picks['alcs'] === picks['alds_2'] && picks['alds_2'], 
+                      () => picks['alds_2'] && handlePick('alcs', picks['alds_2']),
+                      !picks['alds_2']
+                    )}
                   </div>
                 </div>
 
-                {/* WORLD SERIES */}
-                <div className="bg-gradient-to-b from-amber-500/10 to-blue-500/10 border border-amber-500/30 rounded-2xl p-4 text-center space-y-3">
-                  <h2 className="text-xs font-black tracking-widest text-amber-400 uppercase">World Series</h2>
-                  <div className="space-y-2">
-                    <button 
-                      onClick={() => picks['alcs'] && handlePick('ws', picks['alcs'])}
-                      className={`w-full py-2 px-3 rounded-xl font-black text-xs transition-all ${picks['ws'] === picks['alcs'] && picks['alcs'] ? 'bg-amber-500 text-slate-950 shadow-lg scale-105' : 'bg-slate-900 border border-slate-800'}`}>
-                      {picks['alcs'] || 'AL Champion'}
-                    </button>
-                    <div className="text-[10px] font-black text-slate-500">VS</div>
-                    <button 
-                      onClick={() => picks['nlcs'] && handlePick('ws', picks['nlcs'])}
-                      className={`w-full py-2 px-3 rounded-xl font-black text-xs transition-all ${picks['ws'] === picks['nlcs'] && picks['nlcs'] ? 'bg-amber-500 text-slate-950 shadow-lg scale-105' : 'bg-slate-900 border border-slate-800'}`}>
-                      {picks['nlcs'] || 'NL Champion'}
-                    </button>
+                {/* WORLD SERIES CENTER GRAPHIC */}
+                <div className="bg-gradient-to-b from-slate-900 via-blue-950/40 to-slate-900 border border-amber-500/40 rounded-3xl p-4 text-center space-y-3 shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-amber-500 via-yellow-300 to-amber-500"></div>
+                  
+                  <div className="flex justify-center my-1">
+                    <img src={MLB_LOGO} alt="World Series" className="h-10 object-contain filter drop-shadow" />
                   </div>
+
+                  <div>
+                    <h2 className="text-sm font-black tracking-widest text-amber-400 uppercase">WORLD SERIES</h2>
+                    <span className="text-[10px] font-bold text-slate-400">Best of 7</span>
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    {renderTeamCard(
+                      picks['alcs'] || 'AL Champion', 
+                      null, 
+                      picks['ws'] === picks['alcs'] && picks['alcs'], 
+                      () => picks['alcs'] && handlePick('ws', picks['alcs']),
+                      !picks['alcs']
+                    )}
+                    <div className="text-[11px] font-black text-amber-400/80 tracking-widest">VS</div>
+                    {renderTeamCard(
+                      picks['nlcs'] || 'NL Champion', 
+                      null, 
+                      picks['ws'] === picks['nlcs'] && picks['nlcs'], 
+                      () => picks['nlcs'] && handlePick('ws', picks['nlcs']),
+                      !picks['nlcs']
+                    )}
+                  </div>
+
                   {picks['ws'] && (
-                    <div className="pt-2 text-xs font-bold text-amber-300">
-                      🏆 Picked Champion: <br/>
-                      <span className="text-sm font-black text-white">{picks['ws']}</span>
+                    <div className="pt-2 border-t border-amber-500/30">
+                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Predicted Champion</span>
+                      <div className="flex items-center justify-center gap-2 mt-1">
+                        {TEAM_LOGOS[picks['ws']] && <img src={TEAM_LOGOS[picks['ws']]} alt={picks['ws']} className="w-7 h-7 object-contain" />}
+                        <span className="text-sm font-black text-white">{picks['ws']}</span>
+                      </div>
                     </div>
                   )}
                 </div>
 
                 {/* NLCS */}
                 <div className="space-y-4">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">NLCS</h3>
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                    <button 
-                      onClick={() => picks['nlds_1'] && handlePick('nlcs', picks['nlds_1'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['nlcs'] === picks['nlds_1'] && picks['nlds_1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      {picks['nlds_1'] || 'NLDS 1 Winner'}
-                    </button>
-                    <button 
-                      onClick={() => picks['nlds_2'] && handlePick('nlcs', picks['nlds_2'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold ${picks['nlcs'] === picks['nlds_2'] && picks['nlds_2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      {picks['nlds_2'] || 'NLDS 2 Winner'}
-                    </button>
+                  <div className="text-center">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">NLCS</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">Best of 7</span>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                    {renderTeamCard(
+                      picks['nlds_1'] || 'NLDS 1 Winner', 
+                      null, 
+                      picks['nlcs'] === picks['nlds_1'] && picks['nlds_1'], 
+                      () => picks['nlds_1'] && handlePick('nlcs', picks['nlds_1']),
+                      !picks['nlds_1']
+                    )}
+                    {renderTeamCard(
+                      picks['nlds_2'] || 'NLDS 2 Winner', 
+                      null, 
+                      picks['nlcs'] === picks['nlds_2'] && picks['nlds_2'], 
+                      () => picks['nlds_2'] && handlePick('nlcs', picks['nlds_2']),
+                      !picks['nlds_2']
+                    )}
                   </div>
                 </div>
 
                 {/* NLDS */}
-                <div className="space-y-6">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">NLDS</h3>
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                    <button 
-                      onClick={() => handlePick('nlds_1', 'Brewers')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_1'] === 'Brewers' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
-                      <span>#1 Brewers</span>
-                    </button>
-                    <button 
-                      onClick={() => picks['nl_wc2'] && handlePick('nlds_1', picks['nl_wc2'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_1'] === picks['nl_wc2'] && picks['nl_wc2'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      <span>{picks['nl_wc2'] || 'NL WC2 Winner'}</span>
-                    </button>
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">NLDS</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">Best of 5</span>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                    {renderTeamCard('Brewers', 1, picks['nlds_1'] === 'Brewers', () => handlePick('nlds_1', 'Brewers'))}
+                    {renderTeamCard(
+                      picks['nl_wc2'] || 'NL WC2 Winner', 
+                      null, 
+                      picks['nlds_1'] === picks['nl_wc2'] && picks['nl_wc2'], 
+                      () => picks['nl_wc2'] && handlePick('nlds_1', picks['nl_wc2']),
+                      !picks['nl_wc2']
+                    )}
                   </div>
 
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                    <button 
-                      onClick={() => handlePick('nlds_2', 'Dodgers')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_2'] === 'Dodgers' ? 'bg-blue-600 text-white' : 'bg-slate-950'}`}>
-                      <span>#2 Dodgers</span>
-                    </button>
-                    <button 
-                      onClick={() => picks['nl_wc1'] && handlePick('nlds_2', picks['nl_wc1'])}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between ${picks['nlds_2'] === picks['nl_wc1'] && picks['nl_wc1'] ? 'bg-blue-600 text-white' : 'bg-slate-950 opacity-60'}`}>
-                      <span>{picks['nl_wc1'] || 'NL WC1 Winner'}</span>
-                    </button>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                    {renderTeamCard('Dodgers', 2, picks['nlds_2'] === 'Dodgers', () => handlePick('nlds_2', 'Dodgers'))}
+                    {renderTeamCard(
+                      picks['nl_wc1'] || 'NL WC1 Winner', 
+                      null, 
+                      picks['nlds_2'] === picks['nl_wc1'] && picks['nl_wc1'], 
+                      () => picks['nl_wc1'] && handlePick('nlds_2', picks['nl_wc1']),
+                      !picks['nl_wc1']
+                    )}
                   </div>
                 </div>
 
                 {/* NL Wild Card */}
-                <div className="space-y-6">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 text-center">NL Wild Card</h3>
+                <div className="space-y-5">
+                  <div className="text-center">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-rose-400 bg-rose-950/60 border border-rose-800/50 px-2.5 py-1 rounded-full">NATIONAL LEAGUE</span>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white mt-1.5">WILD CARD</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">Best of 3</span>
+                  </div>
                   {INITIAL_TEAMS.nl.wc.map(m => (
-                    <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-xl p-2 space-y-1">
-                      <button 
-                        onClick={() => handlePick(m.id, m.name)}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.name ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
-                        <span>#{m.seed} {m.name}</span>
-                        {picks[m.id] === m.name && <span>✓</span>}
-                      </button>
-                      <button 
-                        onClick={() => handlePick(m.id, m.opponent)}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold flex justify-between items-center transition-all ${picks[m.id] === m.opponent ? 'bg-blue-600 text-white shadow' : 'bg-slate-950 hover:bg-slate-800'}`}>
-                        <span>#{m.oppSeed} {m.opponent}</span>
-                        {picks[m.id] === m.opponent && <span>✓</span>}
-                      </button>
+                    <div key={m.id} className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-md">
+                      {renderTeamCard(m.name, m.seed, picks[m.id] === m.name, () => handlePick(m.id, m.name))}
+                      {renderTeamCard(m.opponent, m.oppSeed, picks[m.id] === m.opponent, () => handlePick(m.id, m.opponent))}
                     </div>
                   ))}
                 </div>
+
               </div>
             </div>
           )}
@@ -512,8 +580,8 @@
           {activeTab === 'leaderboard' && (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <h2 className="text-lg sm:text-xl font-black text-white">Live Group Leaderboard</h2>
-                <span className="text-xs text-slate-400">{brackets.length} Submissions</span>
+                <h2 className="text-lg sm:text-xl font-black text-white uppercase tracking-wider">Live Group Leaderboard</h2>
+                <span className="text-xs text-slate-400 font-bold">{brackets.length} Submissions</span>
               </div>
 
               {brackets.length === 0 ? (
@@ -522,6 +590,7 @@
                 </div>
               ) : (
                 <>
+                  {/* MOBILE VIEW (Card Layout) */}
                   <div className="block md:hidden space-y-3">
                     {sortedBrackets.map((b, idx) => (
                       <div key={b.id || idx} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-md">
@@ -540,7 +609,10 @@
                         <div className="grid grid-cols-2 gap-2 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
                           <div>
                             <span className="text-slate-500 block text-[10px] uppercase font-bold">Predicted Champ</span>
-                            <span className="font-bold text-amber-400">{b.picks?.ws || 'None'}</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {TEAM_LOGOS[b.picks?.ws] && <img src={TEAM_LOGOS[b.picks?.ws]} className="w-4 h-4 object-contain" />}
+                              <span className="font-bold text-amber-400">{b.picks?.ws || 'None'}</span>
+                            </div>
                           </div>
                           <div>
                             <span className="text-slate-500 block text-[10px] uppercase font-bold">Tiebreaker Runs</span>
@@ -557,9 +629,10 @@
                     ))}
                   </div>
 
+                  {/* DESKTOP VIEW (Table Layout) */}
                   <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-sm">
-                      <thead className="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-800">
+                      <thead className="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-800 font-bold">
                         <tr>
                           <th className="px-4 py-3">Rank</th>
                           <th className="px-4 py-3">Participant</th>
@@ -574,7 +647,12 @@
                           <tr key={b.id || idx} className="hover:bg-slate-800/50 transition-colors">
                             <td className="px-4 py-3 font-bold text-slate-400">#{idx + 1}</td>
                             <td className="px-4 py-3 font-black text-white">{b.name}</td>
-                            <td className="px-4 py-3 text-amber-400 font-bold">{b.picks?.ws || 'None'}</td>
+                            <td className="px-4 py-3 font-bold text-amber-400">
+                              <div className="flex items-center gap-2">
+                                {TEAM_LOGOS[b.picks?.ws] && <img src={TEAM_LOGOS[b.picks?.ws]} className="w-5 h-5 object-contain" />}
+                                <span>{b.picks?.ws || 'None'}</span>
+                              </div>
+                            </td>
                             <td className="px-4 py-3 text-slate-400">{b.tbRuns} runs</td>
                             <td className="px-4 py-3 font-black text-emerald-400 text-base">{b.score} pts</td>
                             <td className="px-4 py-3 text-right">
@@ -610,7 +688,10 @@
                   {Object.entries(viewingBracket.picks || {}).map(([match, team]) => (
                     <div key={match} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 flex justify-between items-center">
                       <span className="text-slate-500 uppercase font-mono text-[10px]">{match.replace('_', ' ')}:</span>
-                      <span className="font-bold text-amber-400">{team}</span>
+                      <div className="flex items-center gap-1.5">
+                        {TEAM_LOGOS[team] && <img src={TEAM_LOGOS[team]} className="w-4 h-4 object-contain" />}
+                        <span className="font-bold text-amber-400">{team}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -682,7 +763,11 @@
                           <div key={b.id} className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
                             <div>
                               <div className="font-bold text-white text-sm">{b.name}</div>
-                              <div className="text-[10px] text-slate-500">Picked: {b.picks?.ws || 'No Champion'}</div>
+                              <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                                Picked: 
+                                {TEAM_LOGOS[b.picks?.ws] && <img src={TEAM_LOGOS[b.picks?.ws]} className="w-3.5 h-3.5 object-contain" />}
+                                <span className="text-amber-400 font-bold">{b.picks?.ws || 'No Champion'}</span>
+                              </div>
                             </div>
                             <button 
                               onClick={() => deleteBracket(b.id, b.name)}
@@ -709,7 +794,7 @@
                             placeholder="Winner name..."
                             value={actualResults[key] || ''}
                             onChange={e => saveOfficialResult(key, e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-white focus:outline-none focus:border-blue-500"
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-white focus:outline-none focus:border-blue-500 font-semibold"
                           />
                         </div>
                       ))}
